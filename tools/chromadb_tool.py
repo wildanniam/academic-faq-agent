@@ -109,6 +109,7 @@ def search_chromadb(query: str, k: int = TOP_K) -> list[dict]:
         content  = results["documents"][0][i]
 
         chunks.append({
+            "chunk_id":         results["ids"][0][i],
             "content":          content,
             "source":           meta.get("source", ""),
             "halaman":          meta.get("halaman", 0),

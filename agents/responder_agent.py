@@ -13,6 +13,7 @@ Dipanggil dari pipeline.py sebagai node 'responder'.
 
 import os
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -204,26 +205,45 @@ def responder_node(state: dict) -> dict:
         references   : List referensi pasal + halaman
         flags        : List peringatan
     """
+    logs = list(state.get("logs", []))
+    t0   = datetime.now()
+
+    logs.append({
+        "ts":    t0.isoformat(),
+        "agent": "Responder (Agent 3)",
+        "event": "START",
+        "data": {
+            "is_relevant":  state.get("is_relevant"),
+            "is_ambiguous": state.get("is_ambiguous"),
+            "is_found":     state.get("is_found"),
+        },
+    })
+
     # ── Kasus: tidak relevan atau ambigu (dari Agent 1) ──────────────────────
     if not state.get("is_relevant", True):
+        logs.append({"ts": datetime.now().isoformat(), "agent": "Responder (Agent 3)", "event": "STOP — not relevant", "data": {}})
         return {
             **state,
             "final_answer": state.get("rejection_message", "Maaf, pertanyaanmu di luar topik yang bisa aku bantu."),
             "references":   [],
             "flags":        [],
+            "logs":         logs,
         }
 
     if state.get("is_ambiguous", False):
+        logs.append({"ts": datetime.now().isoformat(), "agent": "Responder (Agent 3)", "event": "STOP — ambiguous", "data": {}})
         return {
             **state,
             "final_answer": state.get("rejection_message", "Bisa tolong perjelas pertanyaanmu?"),
             "references":   [],
             "flags":        [],
+            "logs":         logs,
         }
 
     # ── Kasus: info tidak ditemukan (dari Agent 2) ───────────────────────────
     if not state.get("is_found", False):
         original_query = state.get("query", "pertanyaan tersebut")
+        logs.append({"ts": datetime.now().isoformat(), "agent": "Responder (Agent 3)", "event": "STOP — not found", "data": {}})
         return {
             **state,
             "final_answer": (
@@ -237,12 +257,20 @@ def responder_node(state: dict) -> dict:
             ),
             "references":   [],
             "flags":        ["Info tidak ditemukan di knowledge base."],
+            "logs":         logs,
         }
 
     # ── Generate jawaban via GPT ─────────────────────────────────────────────
     openai  = _get_openai()
     context = _build_context(state)
     query   = state.get("query", "")
+
+    logs.append({
+        "ts":    datetime.now().isoformat(),
+        "agent": "Responder (Agent 3)",
+        "event": "GENERATE — calling GPT",
+        "data":  {"model": CHAT_MODEL, "n_chunks": len(state.get("retrieved_chunks", []))},
+    })
 
     response = openai.chat.completions.create(
         model=CHAT_MODEL,
@@ -278,9 +306,21 @@ def responder_node(state: dict) -> dict:
 
     final = format_response(answer, references, flags, notes)
 
+    logs.append({
+        "ts":    datetime.now().isoformat(),
+        "agent": "Responder (Agent 3)",
+        "event": "DONE",
+        "data": {
+            "n_references": len(references),
+            "n_flags":      len(flags),
+            "elapsed_ms":   round((datetime.now() - t0).total_seconds() * 1000),
+        },
+    })
+
     return {
         **state,
         "final_answer": final,
         "references":   references,
         "flags":        flags,
+        "logs":         logs,
     }

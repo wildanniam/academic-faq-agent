@@ -12,6 +12,7 @@ Tidak membuat jawaban — tugasnya retrieve dan evaluasi saja.
 Dipanggil dari pipeline.py sebagai node 'retriever'.
 """
 
+from datetime import datetime
 from tools.chromadb_tool import (
     search_chromadb,
     check_similarity_score,
@@ -44,16 +45,39 @@ def retriever_node(state: dict) -> dict:
     """
     query       = state.get("query", "")
     retry_count = state.get("retry_count", 0)
+    logs        = list(state.get("logs", []))
 
     current_query = query
+
+    logs.append({
+        "ts":    datetime.now().isoformat(),
+        "agent": "Retriever (Agent 2)",
+        "event": "START",
+        "data":  {"query": current_query},
+    })
 
     # ── Retrieve + self-correction loop ─────────────────────────────────────
     chunks = []
     found  = False
 
     for attempt in range(MAX_RETRY + 1):
-        chunks = search_chromadb(current_query)
-        passed = check_similarity_score(chunks)
+        t_search = datetime.now()
+        chunks   = search_chromadb(current_query)
+        passed   = check_similarity_score(chunks)
+
+        logs.append({
+            "ts":    datetime.now().isoformat(),
+            "agent": "Retriever (Agent 2)",
+            "event": f"SEARCH (attempt {attempt + 1})",
+            "data": {
+                "query":      current_query,
+                "n_chunks":   len(chunks),
+                "scores":     [c["similarity_score"] for c in chunks],
+                "chunk_ids":  [c.get("chunk_id", "") for c in chunks],
+                "passed":     passed,
+                "elapsed_ms": round((datetime.now() - t_search).total_seconds() * 1000),
+            },
+        })
 
         if passed:
             found = True
@@ -61,8 +85,19 @@ def retriever_node(state: dict) -> dict:
 
         # Score rendah — reformulate kalau masih ada attempt tersisa
         if attempt < MAX_RETRY:
-            retry_count += 1
+            retry_count  += 1
+            old_query     = current_query
             current_query = reformulate_query(query, attempt + 1)
+            logs.append({
+                "ts":    datetime.now().isoformat(),
+                "agent": "Retriever (Agent 2)",
+                "event": "REFORMULATE",
+                "data": {
+                    "attempt":    attempt + 1,
+                    "old_query":  old_query,
+                    "new_query":  current_query,
+                },
+            })
 
     # ── Post-processing ──────────────────────────────────────────────────────
 
@@ -83,9 +118,22 @@ def retriever_node(state: dict) -> dict:
     # Similarity scores
     similarity_scores = [c["similarity_score"] for c in chunks]
 
+    logs.append({
+        "ts":    datetime.now().isoformat(),
+        "agent": "Retriever (Agent 2)",
+        "event": "RESULT",
+        "data": {
+            "is_found":        found,
+            "retry_count":     retry_count,
+            "has_contradiction": contradiction_info["has_contradiction"],
+            "contradiction_reason": contradiction_info.get("reason", ""),
+            "is_outdated":     is_outdated,
+        },
+    })
+
     return {
         **state,
-        "query":              current_query,          # bisa sudah direformulasi
+        "query":              current_query,
         "retrieved_chunks":   chunks,
         "similarity_scores":  similarity_scores,
         "retry_count":        retry_count,
@@ -94,4 +142,5 @@ def retriever_node(state: dict) -> dict:
         "is_found":           found,
         "chunk_metadata":     chunk_metadata,
         "contradiction_info": contradiction_info,
+        "logs":               logs,
     }

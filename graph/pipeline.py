@@ -44,6 +44,9 @@ class AgentState(TypedDict, total=False):
     references: List             # Referensi pasal + halaman
     flags: List                  # Flag peringatan (outdated, kontradiksi)
 
+    # Logs lintas agent
+    logs: List                   # Timeline events dari semua agent
+
 
 # ── Routing condition ─────────────────────────────────────────────────────────
 
@@ -127,5 +130,6 @@ def run_pipeline(query: str) -> AgentState:
     initial_state: AgentState = {
         "query":       query,
         "retry_count": 0,
+        "logs":        [],
     }
     return pipeline.invoke(initial_state)

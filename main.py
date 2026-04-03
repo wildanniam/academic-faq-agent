@@ -7,6 +7,8 @@ Jalankan:
 
 import sys
 import time
+import json
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -58,72 +60,151 @@ st.markdown("""
 
 # ── Helper functions (didefinisikan sebelum digunakan) ────────────────────────
 
+def _score_verdict(score: float) -> str:
+    if score >= 0.7:
+        return "✅ relevan"
+    if score >= 0.5:
+        return "⚠️ cukup relevan"
+    return "❌ kurang relevan"
+
+
 def _render_debug_panel(s: dict):
     """Tampilkan panel debug detail proses agent."""
     with st.expander("🔍 Detail Proses Agent", expanded=False):
 
+        # ── Summary badges ────────────────────────────────────────────────
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(
-                '<span class="agent-badge badge-router">Agent 1 — Router</span>',
-                unsafe_allow_html=True,
-            )
+            st.markdown('<span class="agent-badge badge-router">Agent 1 — Router</span>', unsafe_allow_html=True)
             st.markdown(f"**Relevan:** {'✅' if s.get('is_relevant') else '❌'}")
             st.markdown(f"**Ambigu:** {'⚠️' if s.get('is_ambiguous') else '✅'}")
-
         with col2:
-            st.markdown(
-                '<span class="agent-badge badge-retriever">Agent 2 — Retriever</span>',
-                unsafe_allow_html=True,
-            )
+            st.markdown('<span class="agent-badge badge-retriever">Agent 2 — Retriever</span>', unsafe_allow_html=True)
             st.markdown(f"**Ditemukan:** {'✅' if s.get('is_found') else '❌'}")
             st.markdown(f"**Retry:** {s.get('retry_count', 0)}x")
             st.markdown(f"**Kontradiksi:** {'⚠️' if s.get('has_contradiction') else '✅'}")
             st.markdown(f"**Outdated:** {'⚠️' if s.get('is_outdated') else '✅'}")
-
         with col3:
-            st.markdown(
-                '<span class="agent-badge badge-responder">Agent 3 — Responder</span>',
-                unsafe_allow_html=True,
-            )
-            refs  = s.get("references", [])
-            flags = s.get("flags", [])
-            st.markdown(f"**Referensi:** {len(refs)}")
-            st.markdown(f"**Flags:** {len(flags)}")
+            st.markdown('<span class="agent-badge badge-responder">Agent 3 — Responder</span>', unsafe_allow_html=True)
+            st.markdown(f"**Referensi:** {len(s.get('references', []))}")
+            st.markdown(f"**Flags:** {len(s.get('flags', []))}")
 
-        # Chunk cards
-        chunks = s.get("retrieved_chunks", [])
-        if chunks:
-            st.markdown("---")
-            st.markdown("**Chunk yang di-retrieve:**")
-            for i, chunk in enumerate(chunks, 1):
-                score = chunk.get("similarity_score", 0)
-                if score >= 0.7:
-                    score_cls = "score-high"
-                    verdict   = "✅ relevan"
-                elif score >= 0.5:
-                    score_cls = "score-medium"
-                    verdict   = "⚠️ cukup relevan"
+        st.divider()
+
+        # ── Logs timeline ─────────────────────────────────────────────────
+        logs = s.get("logs", [])
+        if logs:
+            st.markdown("**📋 Logs Pipeline:**")
+            for entry in logs:
+                ts    = entry.get("ts", "")[:19].replace("T", " ")
+                agent = entry.get("agent", "")
+                event = entry.get("event", "")
+                data  = entry.get("data", {})
+
+                # Warna badge per agent
+                if "Router" in agent:
+                    badge_style = "background:#7c3aed;color:white"
+                elif "Retriever" in agent:
+                    badge_style = "background:#0369a1;color:white"
                 else:
-                    score_cls = "score-low"
-                    verdict   = "❌ kurang relevan"
+                    badge_style = "background:#15803d;color:white"
+
+                data_str = "  |  ".join(f"{k}: `{v}`" for k, v in data.items() if v not in (None, "", [], {}))
 
                 st.markdown(
-                    f'<div class="chunk-card">'
-                    f'<b>#{i}</b> — {chunk.get("source", "")[:50]} '
-                    f'hal. {chunk.get("halaman", "")} | '
-                    f'<span class="{score_cls}">score: {score:.4f} ({verdict})</span><br>'
-                    f'<small><i>{chunk.get("section", "—")}</i></small><br>'
-                    f'<small>{" ".join(chunk.get("content", "").split()[:30])}...</small>'
+                    f'<div style="font-size:13px;padding:4px 0;border-bottom:1px solid #e2e8f0">'
+                    f'<span style="color:#888;font-size:11px">{ts}</span> &nbsp;'
+                    f'<span style="padding:1px 8px;border-radius:10px;font-size:11px;{badge_style}">{agent}</span> &nbsp;'
+                    f'<b>{event}</b>'
+                    f'{"  — " + data_str if data_str else ""}'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
 
-        # Kontradiksi detail
+            st.divider()
+
+        # ── Chunk cards ───────────────────────────────────────────────────
+        chunks = s.get("retrieved_chunks", [])
+        if chunks:
+            st.markdown("**📦 Chunk yang di-retrieve:**")
+            for i, chunk in enumerate(chunks, 1):
+                score      = chunk.get("similarity_score", 0)
+                verdict    = _score_verdict(score)
+                chunk_id   = chunk.get("chunk_id", "—")
+                source     = chunk.get("source", "")
+                halaman    = chunk.get("halaman", "")
+                section    = chunk.get("section", "—")
+                method     = chunk.get("chunk_method", "")
+                doc_level  = chunk.get("doc_level", "")
+                word_count = chunk.get("word_count", "")
+                preview    = " ".join(chunk.get("content", "").split()[:40]) + "..."
+
+                with st.expander(
+                    f"Chunk #{i} | {verdict} | score: {score:.4f} | {source[:40]}",
+                    expanded=False,
+                ):
+                    mc1, mc2 = st.columns([2, 1])
+                    with mc1:
+                        st.markdown("**Konten (preview 40 kata):**")
+                        st.text(preview)
+                    with mc2:
+                        st.markdown("**Metadata:**")
+                        st.markdown(f"- **chunk_id:** `{chunk_id}`")
+                        st.markdown(f"- **source:** `{source}`")
+                        st.markdown(f"- **halaman:** `{halaman}`")
+                        st.markdown(f"- **section:** `{section}`")
+                        st.markdown(f"- **method:** `{method}`")
+                        st.markdown(f"- **doc_level:** `L{doc_level}`")
+                        st.markdown(f"- **word_count:** `{word_count}`")
+                        st.markdown(f"- **similarity:** `{score:.4f}`")
+
+        # ── Kontradiksi detail ────────────────────────────────────────────
         c_info = s.get("contradiction_info", {})
         if c_info.get("has_contradiction"):
-            st.markdown("---")
             st.warning(f"⚠️ **Kontradiksi:** {c_info.get('reason', '')}")
+
+        st.divider()
+
+        # ── Download log ──────────────────────────────────────────────────
+        log_payload = {
+            "query":           s.get("query", ""),
+            "timestamp":       datetime.now().isoformat(),
+            "pipeline_result": {
+                "is_relevant":     s.get("is_relevant"),
+                "is_ambiguous":    s.get("is_ambiguous"),
+                "is_found":        s.get("is_found"),
+                "retry_count":     s.get("retry_count"),
+                "has_contradiction": s.get("has_contradiction"),
+                "is_outdated":     s.get("is_outdated"),
+                "references":      s.get("references", []),
+                "flags":           s.get("flags", []),
+            },
+            "retrieved_chunks": [
+                {
+                    "chunk_id":        c.get("chunk_id"),
+                    "source":          c.get("source"),
+                    "halaman":         c.get("halaman"),
+                    "section":         c.get("section"),
+                    "similarity_score": c.get("similarity_score"),
+                    "doc_level":       c.get("doc_level"),
+                    "chunk_method":    c.get("chunk_method"),
+                    "word_count":      c.get("word_count"),
+                    "content":         c.get("content"),
+                }
+                for c in s.get("retrieved_chunks", [])
+            ],
+            "logs": s.get("logs", []),
+            "final_answer": s.get("final_answer", ""),
+        }
+
+        filename = f"rag_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        st.download_button(
+            label="⬇️ Download log (JSON)",
+            data=json.dumps(log_payload, ensure_ascii=False, indent=2),
+            file_name=filename,
+            mime="application/json",
+            use_container_width=True,
+        )
 
 
 # ── Header ────────────────────────────────────────────────────────────────────

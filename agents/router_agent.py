@@ -12,6 +12,7 @@ Dipanggil dari pipeline.py sebagai node 'router'.
 
 import os
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -125,14 +126,38 @@ def router_node(state: dict) -> dict:
     LangGraph node untuk Agent 1 — Router.
 
     Input state fields  : query
-    Output state fields : is_relevant, is_ambiguous, rejection_message
+    Output state fields : is_relevant, is_ambiguous, rejection_message, logs
     """
-    query = state.get("query", "")
+    query  = state.get("query", "")
+    logs   = list(state.get("logs", []))
+    t0     = datetime.now()
+
+    logs.append({
+        "ts":    t0.isoformat(),
+        "agent": "Router (Agent 1)",
+        "event": "START",
+        "data":  {"query": query},
+    })
+
     result = classify_question(query)
+
+    logs.append({
+        "ts":    datetime.now().isoformat(),
+        "agent": "Router (Agent 1)",
+        "event": "DECISION",
+        "data": {
+            "is_relevant":  result["is_relevant"],
+            "is_ambiguous": result["is_ambiguous"],
+            "reason":       result.get("reason", ""),
+            "message":      result.get("message", ""),
+            "elapsed_ms":   round((datetime.now() - t0).total_seconds() * 1000),
+        },
+    })
 
     return {
         **state,
-        "is_relevant":        result["is_relevant"],
-        "is_ambiguous":       result["is_ambiguous"],
-        "rejection_message":  result.get("message", ""),
+        "is_relevant":       result["is_relevant"],
+        "is_ambiguous":      result["is_ambiguous"],
+        "rejection_message": result.get("message", ""),
+        "logs":              logs,
     }
