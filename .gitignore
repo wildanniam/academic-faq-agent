@@ -1,0 +1,25 @@
+# Environment variables — JANGAN PERNAH dicommit
+.env
+.env.local
+.env.production
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ChromaDB local storage
+vectordb/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
